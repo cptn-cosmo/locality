@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Locality</title>
+  <meta name="description" content="Local warnings, roadworks, police reports and news from official sources">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📍 Locality</div>
+    <nav id="tabs" class="tabs" aria-label="Locations"></nav>
+    <div class="status">
+      <span id="updated" class="muted"></span>
+      <button id="refresh" class="btn" title="Refresh">↻</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <section class="hero">
+      <div>
+        <h1 id="loc-name">…</h1>
+        <p id="loc-sub" class="muted"></p>
+      </div>
+      <div id="weather" class="weather"></div>
+    </section>
+
+    <section id="warnings" class="warnings" aria-live="polite"></section>
+
+    <div class="grid">
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>Roadworks &amp; closures</h2>
+            <div id="rw-filters" class="chips"></div>
+          </div>
+          <div id="map" class="map"></div>
+          <ul id="roadworks" class="list"></ul>
+        </section>
+      </div>
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>Police &amp; emergency services</h2>
+            <label class="toggle"><input type="checkbox" id="police-local" checked> Local only</label>
+          </div>
+          <ul id="police" class="list"></ul>
+        </section>
+        <section class="card">
+          <div class="card-head">
+            <h2>Regional news</h2>
+            <label class="toggle"><input type="checkbox" id="news-local" checked> Local only</label>
+          </div>
+          <ul id="news" class="list"></ul>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Pollen</h2><span id="pollen-region" class="muted small"></span></div>
+          <div id="pollen"></div>
+        </section>
+      </div>
+    </div>
+
+    <footer class="muted small">
+      Data: NINA / Bundesamt für Bevölkerungsschutz · Deutscher Wetterdienst (via Bright Sky) ·
+      Autobahn GmbH des Bundes · VIZ Berlin · the configured police and news RSS feeds ·
+      Map © OpenStreetMap contributors. Not an official warning service — in emergencies follow NINA/radio.
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

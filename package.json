@@ -1,0 +1,11 @@
+{
+  "name": "locality",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local warnings, roadworks, police reports and news from official/free German sources",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js"
+  },
+  "engines": { "node": ">=22.9" }
+}
