@@ -253,7 +253,7 @@ const MODE_GROUP = {
   BUS: 'bus', COACH: 'bus', ODM: 'bus', FERRY: 'ferry',
 };
 const GROUP_LABEL = { rail: 'Train', tram: 'Tram', bus: 'Bus', ferry: 'Ferry', other: 'Other' };
-const BOARD_ROWS = 8;
+const BOARD_ROWS = 2;
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 function departureRow(x) {
