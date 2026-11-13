@@ -2,6 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 10 * 60_000;
+const TRANSIT_REFRESH_MS = 60_000;
 
 /** Tiny DOM helper; children strings become text nodes (never HTML). */
 function h(tag, props = {}, ...children) {
@@ -40,6 +41,8 @@ const state = {
   rwFilter: store.get('rwFilter', 'now'),
   policeLocal: store.get('policeLocal', true),
   newsLocal: store.get('newsLocal', true),
+  transitMode: store.get('transitMode', {}), // stopId -> mode group
+  transitMore: {}, // stopId -> "more" expanded
   loading: false,
 };
 
@@ -242,6 +245,86 @@ function renderPollen(sec) {
   el.append(grid);
 }
 
+// Transitous modes, grouped for the filter chips.
+const MODE_GROUP = {
+  HIGHSPEED_RAIL: 'rail', LONG_DISTANCE: 'rail', NIGHT_RAIL: 'rail', REGIONAL_FAST_RAIL: 'rail', REGIONAL_RAIL: 'rail',
+  RAIL: 'rail', SUBURBAN: 'rail', SUBWAY: 'rail', METRO: 'rail',
+  TRAM: 'tram', CABLE_CAR: 'tram', FUNICULAR: 'tram', AERIAL_LIFT: 'tram',
+  BUS: 'bus', COACH: 'bus', ODM: 'bus', FERRY: 'ferry',
+};
+const GROUP_LABEL = { rail: 'Train', tram: 'Tram', bus: 'Bus', ferry: 'Ferry', other: 'Other' };
+const BOARD_ROWS = 8;
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+
+function departureRow(x) {
+  const mins = Math.round((new Date(x.expected) - Date.now()) / 60_000);
+  const late = x.delay != null && x.delay >= 3;
+  const style = x.color ? `background:${x.color};color:${x.textColor || '#fff'};border-color:${x.color}` : null;
+  return h('tr', { class: x.cancelled ? 'cancelled' : null },
+    // Rows are ordered by the expected time, so that is the one shown in bold.
+    h('td', { class: 'time' },
+      h('b', { class: late && !x.cancelled ? 'late' : null }, fmtTime(x.cancelled ? x.scheduled : x.expected)),
+      x.cancelled ? h('span', { class: 'in late' }, 'cancelled')
+        : h('span', { class: `in ${x.delay != null && !late ? 'ontime' : ''}` },
+          x.delay ? `was ${fmtTime(x.scheduled)} · ` : '', mins <= 0 ? 'now' : `${mins} min`)),
+    h('td', { class: 'line' }, h('span', { class: 'line-badge', style, title: x.agency || '' }, x.line)),
+    h('td', { class: 'dest' }, x.headsign, ...x.alerts.map((a) => h('span', { class: 'alert' }, `⚠ ${a}`))),
+    h('td', { class: `track ${x.trackChanged ? 'changed' : ''}`, title: x.trackChanged ? 'Platform changed' : null }, x.track || ''),
+  );
+}
+
+function renderStation(s) {
+  const wrap = h('div', { class: 'station' });
+  if (!s.ok) {
+    wrap.append(h('div', { class: 'station-head' }, h('h3', {}, s.label)), h('div', { class: 'error' }, `Unavailable: ${s.error}`));
+    return wrap;
+  }
+  const sum = s.summary;
+  const status = [
+    sum.cancelled && h('span', { class: 'badge closure' }, `${sum.cancelled} cancelled`),
+    sum.delayed && h('span', { class: 'badge moderate' }, `${sum.delayed} delayed 5+ min`),
+    !sum.cancelled && !sum.delayed && sum.realtime > 0 && h('span', { class: 'badge', style: 'background:var(--ok)' }, 'running normally'),
+  ].filter(Boolean);
+  wrap.append(h('div', { class: 'station-head' },
+    h('h3', {}, s.label, s.name && s.name !== s.label ? h('span', { class: 'muted small' }, ` · ${s.name}`) : null),
+    h('span', { class: 'meta chips' }, status)));
+
+  const groups = [...new Set(s.departures.map((x) => MODE_GROUP[x.mode] || 'other'))];
+  const key = s.stopId;
+  let mode = state.transitMode[key];
+  if (!groups.includes(mode)) mode = 'all';
+  if (groups.length > 1) {
+    wrap.append(h('div', { class: 'chips' }, ['all', ...groups].map((g) => h('button', {
+      class: 'chip', 'aria-pressed': String(mode === g),
+      onclick: () => { state.transitMode[key] = g; store.set('transitMode', state.transitMode); renderTransit(state.data.transit); },
+    }, g === 'all' ? 'All' : GROUP_LABEL[g]))));
+  }
+  const deps = s.departures.filter((x) => mode === 'all' || (MODE_GROUP[x.mode] || 'other') === mode);
+  if (!deps.length) { wrap.append(h('div', { class: 'notice' }, 'No departures in the next two hours.')); return wrap; }
+  wrap.append(h('table', { class: 'board' }, h('tbody', {}, deps.slice(0, BOARD_ROWS).map(departureRow))));
+  if (deps.length > BOARD_ROWS) {
+    const more = h('details', { class: 'board-more' }, h('summary', {}, `${deps.length - BOARD_ROWS} more until ${fmtTime(deps.at(-1).scheduled)}`),
+      h('table', { class: 'board' }, h('tbody', {}, deps.slice(BOARD_ROWS).map(departureRow))));
+    more.open = !!state.transitMore[key];
+    more.addEventListener('toggle', () => { state.transitMore[key] = more.open; });
+    wrap.append(more);
+  }
+  return wrap;
+}
+
+function renderTransit(sec) {
+  const el = $('transit');
+  el.replaceChildren();
+  if (!sec?.ok) { el.append(h('div', { class: 'error' }, `Unavailable: ${sec?.error}`)); return; }
+  el.append(...sec.stations.map(renderStation));
+  if (sec.news) {
+    const list = h('ul', { class: 'list', id: 'transit-news' });
+    el.append(h('div', { class: 'transit-news' }, h('h3', {}, 'Service updates'), list));
+    renderFeed('transit-news', sec.news, false, () => {});
+  }
+  el.append(h('p', { class: 'muted small', style: 'margin:10px 0 0' }, `Times scheduled; live delays where reported · ${sec.source}`));
+}
+
 function render() {
   const loc = state.current;
   const d = state.data;
@@ -249,6 +332,7 @@ function render() {
   $('loc-sub').textContent = loc.subtitle;
   document.title = `${loc.name} · Locality`;
   for (const b of $('tabs').children) b.setAttribute('aria-current', String(b.dataset.id === loc.id));
+  $('transit-card').hidden = !loc.transit;
   if (!d) return;
   $('updated').textContent = `Updated ${new Date(d.fetchedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
   renderWeather(d.weather);
@@ -257,6 +341,7 @@ function render() {
   renderFeed('police', d.police, state.policeLocal, (v) => { $('police-local').checked = v; setPref('policeLocal', v); });
   renderFeed('news', d.news, state.newsLocal, (v) => { $('news-local').checked = v; setPref('newsLocal', v); });
   renderPollen(d.pollen);
+  if (loc.transit) renderTransit(d.transit);
 }
 
 function setPref(key, v) {
@@ -270,6 +355,23 @@ function showLoading() {
   $('warnings').replaceChildren(h('div', { class: 'warning skeleton' }, 'Checking official warnings…'));
   $('weather').replaceChildren();
   $('pollen').replaceChildren();
+  $('transit').replaceChildren(h('div', { class: 'skeleton' }, 'Loading departures…'));
+}
+
+// Departures go stale much faster than the rest, so they refresh on their own.
+let transitSeq = 0;
+async function loadTransit() {
+  const loc = state.current;
+  if (!loc?.transit || !state.data || state.loading) return;
+  const seq = ++transitSeq;
+  try {
+    const res = await fetch(`/api/location/${loc.id}/transit`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const { transit } = await res.json();
+    if (seq !== transitSeq || state.current !== loc || !state.data) return;
+    state.data.transit = transit;
+    renderTransit(transit);
+  } catch { /* keep the last board; the next tick retries */ }
 }
 
 // ------------------------------------------------------------------ loading
@@ -322,8 +424,11 @@ async function init() {
   });
   selectLocation(location.hash.slice(1) || store.get('location', state.locations[0].id));
   setInterval(() => { if (!document.hidden) load(false); }, REFRESH_MS);
+  setInterval(() => { if (!document.hidden) loadTransit(); }, TRANSIT_REFRESH_MS);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.data && Date.now() - new Date(state.data.fetchedAt) > REFRESH_MS) load(false);
+    if (document.hidden || !state.data) return;
+    if (Date.now() - new Date(state.data.fetchedAt) > REFRESH_MS) load(false);
+    else loadTransit();
   });
 }
 

@@ -362,6 +362,95 @@ async function pollen(loc) {
   };
 }
 
+// Public transport via Transitous (MOTIS): Europe-wide GTFS incl. DELFI (all of Germany)
+// with realtime. Free, no key; https://transitous.org/api/ asks for a sensible UA and caching.
+
+const TRANSITOUS = 'https://api.transitous.org/api';
+const STOP_ID = /^[a-z]{2}-[\w-]+_\S+$/;
+const BOARD_SIZE = 60;
+const BOARD_WINDOW_MS = 2 * 60 * 60_000;
+
+async function resolveStop(loc, station) {
+  if (STOP_ID.test(station.query)) return { id: station.query, name: null };
+  const q = new URLSearchParams({ text: station.query, type: 'STOP', place: `${loc.lat},${loc.lon}` });
+  const results = await fetchJson(`${TRANSITOUS}/v1/geocode?${q}`, { ttl: 24 * 60 * 60_000 });
+  // Results are ranked with a bias towards the location's centre, but fuzzy matching can
+  // still return stops abroad: keep only nearby stops with scheduled service.
+  const maxKm = Math.max(loc.radiusKm * 2, 30);
+  const best = results.find((r) => r.type === 'STOP' && r.modes?.length
+    && haversineKm(loc.lat, loc.lon, r.lat, r.lon) <= maxKm);
+  if (!best) throw new Error(`no stop matching "${station.query}" within ${maxKm} km`);
+  return { id: best.id, name: best.name };
+}
+
+const minutesBetween = (a, b) => (a && b ? Math.round((new Date(a) - new Date(b)) / 60_000) : null);
+
+async function departureBoard(loc, station) {
+  const stop = await resolveStop(loc, station);
+  const q = new URLSearchParams({ stopId: stop.id, n: BOARD_SIZE });
+  const d = await fetchJson(`${TRANSITOUS}/v5/stoptimes?${q}`, { ttl: 60_000 });
+  const until = Date.now() + BOARD_WINDOW_MS;
+  const departures = (d.stopTimes || [])
+    .filter((st) => st.place?.departure && st.place.pickupType !== 'NOT_ALLOWED')
+    .map((st) => {
+      const p = st.place;
+      return {
+        line: st.displayName || st.routeShortName || st.tripShortName || '',
+        mode: st.mode,
+        color: st.routeColor ? `#${st.routeColor}` : null,
+        textColor: st.routeTextColor ? `#${st.routeTextColor}` : null,
+        headsign: st.headsign || st.tripTo?.name || '',
+        scheduled: p.scheduledDeparture || p.departure,
+        expected: p.departure,
+        delay: st.realTime ? minutesBetween(p.departure, p.scheduledDeparture) : null,
+        realtime: !!st.realTime,
+        cancelled: !!(st.cancelled || st.tripCancelled || p.cancelled),
+        track: p.track || p.scheduledTrack || null,
+        trackChanged: !!(p.track && p.scheduledTrack && p.track !== p.scheduledTrack),
+        agency: st.agencyName || null,
+        alerts: (st.alerts || p.alerts || []).map((a) => a.headerText || a.descriptionText).filter(Boolean),
+      };
+    })
+    .filter((x) => new Date(x.scheduled) <= until)
+    .sort((a, b) => new Date(a.expected) - new Date(b.expected));
+
+  const live = departures.filter((x) => x.realtime && !x.cancelled);
+  return {
+    label: station.label || d.place?.name || stop.name || station.query,
+    name: d.place?.name || stop.name,
+    stopId: stop.id,
+    departures,
+    summary: {
+      count: departures.length,
+      until: departures.at(-1)?.scheduled || null,
+      cancelled: departures.filter((x) => x.cancelled).length,
+      delayed: live.filter((x) => x.delay >= 5).length,
+      maxDelay: Math.max(0, ...live.map((x) => x.delay || 0)),
+      realtime: live.length,
+    },
+  };
+}
+
+async function transit(loc) {
+  if (!loc.stations.length && !loc.transit.length) throw new Error('no stations or transit feeds configured');
+  const [boards, news] = await Promise.all([
+    Promise.allSettled(loc.stations.map((s) => departureBoard(loc, s))),
+    loc.transit.length ? section(feeds(loc.transit)) : null,
+  ]);
+  const stations = boards.map((r, i) => (r.status === 'fulfilled'
+    ? { ok: true, ...r.value }
+    : { ok: false, label: loc.stations[i].label || loc.stations[i].query, error: r.reason.message }));
+  if (stations.length && stations.every((s) => !s.ok) && !news?.ok) {
+    throw new Error(stations.map((s) => `${s.label}: ${s.error}`).concat(news ? [news.error] : []).join('; '));
+  }
+  return { stations, news, source: 'Transitous (DELFI timetable + realtime)' };
+}
+
+async function section(p) {
+  try { return { ok: true, ...(await p) }; }
+  catch (err) { return { ok: false, error: err.message }; }
+}
+
 async function locationReport(loc) {
   const sections = {
     warnings: warnings(loc),
@@ -370,12 +459,10 @@ async function locationReport(loc) {
     police: feeds(loc.police),
     news: feeds(loc.news),
     pollen: pollen(loc),
+    transit: transit(loc),
   };
   const out = { fetchedAt: new Date().toISOString() };
-  await Promise.all(Object.entries(sections).map(async ([k, p]) => {
-    try { out[k] = { ok: true, ...(await p) }; }
-    catch (err) { out[k] = { ok: false, error: err.message }; }
-  }));
+  await Promise.all(Object.entries(sections).map(async ([k, p]) => { out[k] = await section(p); }));
   return out;
 }
 
@@ -392,12 +479,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   try {
     if (url.pathname === '/api/locations') {
-      return send(res, 200, LOCATIONS.map(({ id, name, subtitle, lat, lon, radiusKm }) => ({ id, name, subtitle, lat, lon, radiusKm })));
+      return send(res, 200, LOCATIONS.map(({ id, name, subtitle, lat, lon, radiusKm, stations, transit }) =>
+        ({ id, name, subtitle, lat, lon, radiusKm, transit: stations.length + transit.length > 0 })));
     }
-    const m = /^\/api\/location\/([\w-]+)$/.exec(url.pathname);
+    const m = /^\/api\/location\/([\w-]+)(\/transit)?$/.exec(url.pathname);
     if (m) {
       const loc = LOCATIONS.find((l) => l.id === m[1]);
       if (!loc) return send(res, 404, { error: 'unknown location' });
+      if (m[2]) return send(res, 200, { fetchedAt: new Date().toISOString(), transit: await section(transit(loc)) });
       return send(res, 200, await locationReport(loc));
     }
     const rel = normalize(url.pathname === '/' ? '/index.html' : url.pathname).replace(/^(\.\.[/\\])+/, '');

@@ -12,6 +12,9 @@
 //   <ID>_POLLEN=region/part                DWD pollen region (part -1 = whole region)
 //   <ID>_KEYWORDS=a,b,/re/                 words that mark an item as local
 //   <ID>_POLICE, <ID>_NEWS                 feeds: "Name|url|keywords; Name|url"
+//   <ID>_STATIONS                          up to 2 stops for departure boards: "Label|query; query"
+//                                          (query = stop name or a Transitous stop id)
+//   <ID>_TRANSIT                           optional transit disruption feeds, same format as NEWS
 //
 // A feed's optional third field turns on local matching for it: a comma list of
 // keywords, where `*` stands for <ID>_KEYWORDS. Keywords written as /…/ are regexes.
@@ -48,6 +51,21 @@ function feeds(key, base) {
   });
 }
 
+const MAX_STATIONS = 2;
+
+// "Label|query; query" -> [{ label, query }]. A query is either a stop name, resolved
+// near the location's centre, or a Transitous stop id such as de-DELFI_de:06411:4734.
+function stations(key) {
+  const out = list(env[key], ';').map((entry) => {
+    const parts = entry.split('|').map((x) => x.trim());
+    const [label, query] = parts.length > 1 ? parts : [null, parts[0]];
+    if (!query) throw new Error(`${key}: expected "[Label|]stop name or id", got "${entry}"`);
+    return { label, query };
+  });
+  if (out.length > MAX_STATIONS) throw new Error(`${key}: at most ${MAX_STATIONS} stations, got ${out.length}`);
+  return out;
+}
+
 function location(id) {
   const p = id.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_';
   const base = keywords(env[p + 'KEYWORDS']);
@@ -67,6 +85,8 @@ function location(id) {
     pollen: region ? { region, part } : null,
     police: feeds(p + 'POLICE', base),
     news: feeds(p + 'NEWS', base),
+    stations: stations(p + 'STATIONS'),
+    transit: feeds(p + 'TRANSIT', base),
   };
 }
 
