@@ -150,6 +150,32 @@ main { max-width: 1400px; margin: 0 auto; padding: 20px; }
 
 .skeleton { color: var(--muted); }
 
+.station + .station, .transit-news { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.station-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.station-head h3 { font-size: .95rem; }
+.station .chips { margin: 6px 0 8px; }
+.board { width: 100%; border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.board td { padding: 5px 4px; border-top: 1px solid var(--border); vertical-align: baseline; }
+.board tr:first-child td { border-top: 0; }
+.board .time { white-space: nowrap; width: 1%; }
+.board .line { width: 1%; white-space: nowrap; }
+.board .dest { width: 100%; overflow-wrap: anywhere; }
+.board .track { white-space: nowrap; text-align: right; color: var(--muted); width: 1%; }
+.board .track.changed { color: var(--sev-severe); font-weight: 600; }
+.board .late { color: var(--sev-severe); font-weight: 600; }
+.board .ontime { color: var(--ok); }
+.board .in { color: var(--muted); font-size: .78rem; display: block; }
+.board tr.cancelled .dest, .board tr.cancelled .time b { text-decoration: line-through; color: var(--muted); }
+.board .alert { display: block; font-size: .78rem; color: var(--sev-moderate); }
+.line-badge {
+  display: inline-block; min-width: 2.4em; text-align: center; font-weight: 700; font-size: .78rem;
+  padding: 1px 6px; border-radius: 5px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+}
+.board-more { margin-top: 6px; }
+.board-more summary { cursor: pointer; color: var(--accent); font-size: .85rem; list-style: none; }
+.board-more summary::-webkit-details-marker { display: none; }
+.transit-news h3 { font-size: .95rem; margin-bottom: 4px; }
+
 footer { margin-top: 24px; text-align: center; }
 
 .leaflet-popup-content { font-size: .85rem; }
